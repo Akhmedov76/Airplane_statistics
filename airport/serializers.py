@@ -11,8 +11,10 @@ class AirportStatisticsSerializer(serializers.Serializer):
         default='flight_time'
     )
 
+
 class AirportDateStatisticsSerializer(serializers.Serializer):
     from_date = serializers.DateField(required=True)
+
 
 class AirportToDateStatisticsSerializer(serializers.Serializer):
     to_date = serializers.DateField(required=True)

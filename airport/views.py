@@ -9,6 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db import connection
 
+from flight.models import Flight
 from .utils import haversine
 
 logger = logging.getLogger(__name__)
@@ -259,6 +260,90 @@ class AirportToDateStatisticsViewSet(viewsets.GenericViewSet):
                 ]
 
                 return Response(results, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Airport statistics error: {str(e)}")
+            return Response(
+                {'message': "Statistika olishda xatolik yuz berdi"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+from django.db.models import Count, Avg, F, ExpressionWrapper, DurationField
+
+
+class AirportStatisticsViewSetAs(viewsets.GenericViewSet):
+    queryset = []
+    serializer_class = AirportStatisticsSerializer
+
+    @swagger_auto_schema(query_serializer=AirportStatisticsSerializer)
+    @action(detail=False, methods=["get"], url_path="airport-statistics")
+    def airport_statistics(self, request, *args, **kwargs):
+        serializer = AirportStatisticsSerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        airport_code = data['airport_code']
+        from_date = data.get('from_date')
+        to_date = data.get('to_date')
+
+        try:
+            flights = Flight.objects.filter(departure_airport__airport_code=airport_code)
+
+            if from_date:
+                flights = flights.filter(scheduled_departure__gte=from_date)
+            if to_date:
+                flights = flights.filter(scheduled_departure__lte=to_date)
+
+            stats = flights.values(
+                'arrival_airport__airport_code',
+                'arrival_airport__airport_name'
+            ).annotate(
+                flights_count=Count('flight_id', distinct=True),
+                passengers_count=Count('flight_no'),
+                avg_duration=Avg(
+                    ExpressionWrapper(
+                        F('scheduled_arrival') - F('scheduled_departure'),
+                        output_field=DurationField()
+                    )
+                )
+            )
+
+            results = []
+            departure_airport = Airport.objects.filter(airport_code=airport_code).first()
+
+            if departure_airport and departure_airport.coordinates:
+                try:
+                    dep_lon, dep_lat = ast.literal_eval(departure_airport.coordinates)
+                    dep_name = departure_airport.airport_name.get('en', '')
+                except Exception as e:
+                    logger.error(f"Departure airport coordinates parsing error: {str(e)}")
+                    return Response({'message': " Aeroport koordinatalarini o‘qishda xatolik"}, status=400)
+
+                for stat in stats:
+                    arrival_code = stat['arrival_airport__airport_code']
+                    arrival_name = stat['arrival_airport__airport_name'].get('en', '')
+                    arrival_airport = Airport.objects.filter(airport_code=arrival_code).first()
+
+                    result = {
+                        "departure_airport": dep_name,
+                        "arrival_airport_name": arrival_name,
+                        "flights_count": stat["flights_count"],
+                        "passengers_count": stat["passengers_count"],
+                        "flight_time": str(stat["avg_duration"]).split('.')[0] if stat["avg_duration"] else None
+                    }
+
+                    if arrival_airport and arrival_airport.coordinates:
+                        try:
+                            arr_lon, arr_lat = ast.literal_eval(arrival_airport.coordinates)
+                            distance = haversine(dep_lat, dep_lon, arr_lat, arr_lon)
+                            result['distance_km'] = round(distance, 2)
+                        except Exception as e:
+                            logger.warning(f"Arrival airport coordinates parsing error: {str(e)}")
+
+                    results.append(result)
+
+            return Response(results, status=status.HTTP_200_OK)
 
         except Exception as e:
             logger.error(f"Airport statistics error: {str(e)}")
