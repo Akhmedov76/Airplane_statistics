@@ -97,20 +97,16 @@ class AirportStatisticsViewSet(viewsets.GenericViewSet):
                     SELECT
                     aa.airport_code AS arrival_code,
                     aa.airport_name->>'en' AS arrival_airport_name,
-                    COUNT(f.flight_id) AS flights_count,
+                    COUNT(DISTINCT f.flight_id) AS flights_count,
+                    COUNT(bp.boarding_no) AS passengers_count,
                     TO_CHAR(
-                    INTERVAL '1 second' * ROUND(AVG(EXTRACT(EPOCH FROM (f.scheduled_arrival - f.scheduled_departure)) / 60), 0),
-                     'HH24:MI:SS') AS flight_time,
-                    (
-                        SELECT 
-                        COUNT(DISTINCT tf.ticket_id) 
-                        FROM ticket_flights tf
-                        WHERE tf.flight_id = f.flight_id
-                    ) AS passengers_count
+                        INTERVAL '1 second' * ROUND(AVG(EXTRACT(EPOCH FROM (f.scheduled_arrival - f.scheduled_departure)) / 60), 0),
+                        'HH24:MI:SS'
+                    ) AS flight_time
                 FROM flights f
                 LEFT JOIN airports_data da ON f.departure_airport_id = da.airport_code
                 LEFT JOIN airports_data aa ON f.arrival_airport_id = aa.airport_code
-                LEFT JOIN ticket_flights tf ON f.flight_id = tf.flight_id
+                LEFT JOIN boarding_passes bp ON f.flight_id = bp.flight_id
                 WHERE f.departure_airport_id = %s
                 """
 
